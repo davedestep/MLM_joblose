@@ -1,0 +1,192 @@
+---
+title: "Lab 3"
+author: "David DeStephano"
+date: "May 2, 2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r warning=FALSE, message=FALSE}
+pd = read.csv("C:\\Users\\daved\\Documents\\Advanced analytic techniques\\Lab 3\\MLM_joblose\\panel-for-R-1.csv")
+
+library(plyr)
+library(psych)
+library(multcomp)
+library(rms)
+library(lme4)
+library(plm)
+
+```
+
+
+#Data
+
+```{r}
+
+pd$rjoblose = 5- pd$joblose
+
+vars = c("rjoblose", "degree", "age", "realinc", "panelwave", "idnum")
+sub = pd[,vars]
+```
+
+
+The multilevel models will include "degree", "age", "realinc", and "panelwave" as independent variables/predictors of job loss.
+
+
+
+#Visualize curves
+```{r}
+# Overall trend in job lose concern
+library(ggplot2)
+g_trend <- ggplot(sub, aes(x = panelwave, y = rjoblose))
+(g_trend <- g_trend + stat_summary(fun.y=mean, geom="line", lwd = 1.25))
+
+# Empirical growth curves for idnum < 200 (& overall)
+g_growth <- ggplot(subset(sub, idnum<200), 
+                   aes(x = panelwave, y = rjoblose, group = idnum, color = factor(idnum)))
+no_legend <- theme(legend.position="none")
+
+g_id <- g_growth + geom_line() + no_legend 
+g_id + stat_summary(fun.y=mean, geom="line", aes(group=1), lty = 2, color="black") 
+
+
+# individual regression lines for idnum < 200 (& overall)
+g_reg <- g_growth + stat_smooth(method = lm, se = F) + no_legend
+g_reg + stat_summary(fun.y=mean, geom="smooth", aes(group=1), lty = 2, color = "black")
+
+```
+
+
+
+
+
+# Simple linear model
+```{r}
+summary(lm(rjoblose ~ factor(degree) + age + realinc + panelwave, sub))
+```
+
+
+#Naive OLS
+```{r message=FALSE, warning=FALSE}
+ lm.naive <- plm(rjoblose ~ factor(degree) + age + realinc + panelwave,
+                 data = sub, index = "idnum", model = "pooling")
+
+
+
+
+clusterSE <- function(fit, cluster.var, data){ # note: cluster.var should be entered as character string
+  require(plm); require(lmtest)
+  
+  if (missing(data) & cluster.var %in% colnames(index(fit))){
+    cvar <- index(fit, cluster.var)
+    n <- length(unique(cvar))
+    N <- length(cvar)
+  }
+  else{
+    row.ids <- as.numeric(rownames(model.frame(fit)))
+    # 1. get number of clusters (omitting individuals with missingness on "divorce.easier" and/or "divorced")
+    n <- length(unique(data[row.ids, cluster.var]))
+    # 2. get number of observations (again omitting the same individuals with missingness)
+    N <- length(row.ids) 
+  }
+  
+  #3. compute degrees of freedom
+  df <- (n/(n - 1)) * (N - 1)/fit$df.residual
+  # compute variance-covariance matrix
+  vcov <- df*vcovHC(fit, type = "HC0", cluster = "group")
+  # retest coefficients  
+  coeftest(fit, vcov = vcov)
+}
+
+
+
+
+
+
+clusterSE(fit = lm.naive, cluster.var = "idnum")
+
+```
+
+
+Net of other factors, for each wave there is 9% less job loss.
+
+
+#"Empty" Random intercept model
+```{r}
+ nullmodel <- lmer(rjoblose ~ (1 | idnum), 
+                   data = sub, REML = FALSE)
+
+summary(nullmodel) 
+
+
+rho <- function(fit){
+ varcor <- VarCorr(fit) # extract the variance components using VarCorr()
+ varcor <- as.data.frame(varcor)[, "sdcor"] # get just the std devs we want
+ sigma_u <- varcor[1] # get sigma_u
+ sigma_e <- varcor[2] # get sigma_e
+ rho <- sigma_u^2 / (sigma_u^2 + sigma_e^2) # compute rho (fraction of variance due to u_i)
++ rho
+}
+
+rho(nullmodel)
+```
+Rho means that 29.6 percent of the variance in rjoblose is between different individuals.
+
+
+
+
+
+#random intercept model
+```{r}
+ lmer.joblose1 <- lmer(rjoblose ~ factor(degree) + age + realinc + panelwave + (1 | idnum), 
+                   data = sub, REML = FALSE)
+
+summary(lmer.joblose1)
+```
+
+
+
+When accounting for individual variation in intercepts, panelwave is still significant and does not differ from our standard ols model. The paramter for panelwave was .0963
+and is now .0960
+
+```{r}
+rho(lmer.joblose1)
+```
+
+Now rho implies 28% of variance of job jossis due to differences between individuals
+
+
+
+
+#random slopes
+```{r}
+lmer.joblose2 <- lmer(rjoblose ~factor(degree) + age + realinc + panelwave + (1 + panelwave | idnum), data = sub, REML = F)
+summary(lmer.joblose2)
+```
+
+
+The coefficient for panelwave has still not changed.
+
+The intercept is 1.79, but there is a standar deviation of 0.23614 around that mean
+
+On average, for each subsequent panelwave, job loss is 9% lower, but there is a standard deviation of .025 around that average slope, which is not very high. We can test if modeling random slope was necessary in the next step.
+
+
+## are random slopes necessary?
+```{r}
+anova(lmer.joblose1, lmer.joblose2)
+```
+
+Random slope is not necessary in this case
+
+
+
+
+
+
+
